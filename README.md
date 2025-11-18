@@ -27,7 +27,7 @@ Linearity check: 1MB subject, pattern that cannot match.
 Parse to a small tree, compile the tree to a program, run the program as a Pike
 VM: every thread advances together over the input, one character at a time, and
 a program counter may appear in the thread list **at most once per input
-position**. That caps total work at `O(len(text) × len(program))`.
+position**. That caps total work at `O(len(text) * len(program))`.
 
 That one invariant -- a pc enters a list once per position -- is the whole
 guarantee. `(a+)+b` is exponential in a backtracking engine because it tries

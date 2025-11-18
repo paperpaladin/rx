@@ -12,7 +12,7 @@ exactly.
 **A program counter enters a thread list at most once per input position.**
 
 That is the entire linear-time guarantee. It bounds total work at
-`O(len(text) × len(program))` and makes catastrophic backtracking structurally
+`O(len(text) * len(program))` and makes catastrophic backtracking structurally
 impossible rather than merely unlikely. Every change has to preserve it; the
 first bug in this project was a change that quietly did not.
 
