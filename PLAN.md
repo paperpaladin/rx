@@ -71,7 +71,7 @@ only interesting property this engine has, so the answer is no.
 
 - [ ] 10 leftmost-longest match position reporting (start and end offsets), still
       without captures
-- [ ] 11 thread priority ordering, which is the prerequisite for greediness
+- [ ] 11 thread priority ordering, the prerequisite for greediness
       having any meaning
 - [ ] 12 capture groups, with the fuzzer comparing `.group(n)` not just
       match/no-match
