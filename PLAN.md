@@ -22,7 +22,7 @@ first bug in this project was a change that quietly did not.
    subjects. `make test` runs 3000 cases at seed 0, zero disagreements.
 
    The 15,500-across-6-seeds figure that used to be here was hand-run in one
-   sitting and is reproducible from nothing in the repo: there is no seed
+   sitting and is reproducible from nothing in the repo. There is no seed
    loop and no multi-seed target. README.md always said 3000 per seed; this
    file was the one overstating it.
 2. `t/pathological.sh`: the linearity claim, measured against a real
@@ -32,7 +32,7 @@ first bug in this project was a change that quietly did not.
 
 Capture groups and submatch extraction. `{m,n}`. Lazy quantifiers. Unicode.
 
-Backreferences are a permanent non-goal, not a deferral: they are
+Backreferences are a permanent non-goal, not a deferral. They are
 incompatible with the linear-time guarantee. Adding them would mean giving up the
 only interesting property this engine has, so the answer is no.
 
