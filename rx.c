@@ -297,12 +297,14 @@ static void addthread(List *l, int pc, const char *sp, const char *text) {
     addthread(l, prog[pc].y, sp, text);
     return;
   case I_BOL:
+    // Start of string only. Python's ^ is the same without MULTILINE.
     if (sp == text) addthread(l, pc + 1, sp, text);
     return;
   case I_EOL:
-    // Python's $ also matches before a trailing newline; we deliberately do not,
-    // and the fuzzer keeps newlines out of its inputs so the two agree.
-    if (*sp == 0) addthread(l, pc + 1, sp, text);
+    // Python's $ without MULTILINE matches at end of string AND just before a
+    // newline that is the last character. Not before any other newline: that is
+    // what MULTILINE would add, and rx does not implement MULTILINE.
+    if (*sp == 0 || (*sp == '\n' && sp[1] == 0)) addthread(l, pc + 1, sp, text);
     return;
   default:
     l->pc[l->n++] = pc;
