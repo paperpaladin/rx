@@ -16,12 +16,17 @@
 
 // ------------------------------------------------------------------- the tree
 
-typedef enum { N_CHAR, N_ANY, N_CLASS, N_CAT, N_ALT, N_STAR, N_PLUS, N_QUEST, N_BOL, N_EOL, N_EMPTY } Nk;
+typedef enum { N_CHAR, N_ANY, N_CLASS, N_CAT, N_ALT, N_STAR, N_PLUS, N_QUEST, N_REP, N_BOL, N_EOL, N_EMPTY } Nk;
 
 typedef struct Node Node;
 struct Node {
   Nk k;
   int c;                   // N_CHAR
+  long long lo, hi;        // N_REP bounds; hi < 0 is {m,} with no upper bound.
+                           // long long, not int: Python accepts a count up to
+                           // 4294967294, which does not fit in an int, and the
+                           // parser has to carry it as far as the program bound
+                           // to refuse it there rather than wrap it to junk.
   unsigned char cls[32];   // N_CLASS bitmap, 256 bits
   Node *l, *r;
 };
@@ -128,6 +133,61 @@ static Node *parse_class(void) {
   return n;
 }
 
+// Python accepts a repetition count up to 4294967294 and rejects 4294967295
+// (its MAXREPEAT) and anything above. Measured, not read off a man page:
+// re.compile("a{4294967294}") succeeds and re.compile("a{4294967295}") raises.
+#define REP_LIMIT 4294967294LL
+
+// Python's brace quantifier. Sets *lo and *hi (*hi < 0 for an open upper bound)
+// and returns true when the cursor is on a valid {m}, {m,}, {,n} or {m,n}.
+//
+// A malformed brace is NOT an error: Python treats it as literal characters, so
+// `a{x}` matches the text "a{x}" and `a{,}` matches "a{,}". This returns false
+// with the cursor untouched for those, and the caller emits a literal '{'.
+//
+// Two forms Python does reject, and so returns true-with-an-error for: a count
+// at or above REP_LIMIT, and bounds the wrong way round. Those are refusals, not
+// literals, and a refusal needs the oracle to agree it is one.
+static bool parse_brace(long long *lo, long long *hi) {
+  if (*pat != '{') return false;
+  const char *p = pat + 1;
+  long long a = 0, b = 0;
+  bool has_a = false, has_b = false, comma = false;
+
+  while (*p >= '0' && *p <= '9') {
+    has_a = true;
+    if (a <= REP_LIMIT) a = a * 10 + (*p - '0');     // saturate, never wrap
+    p++;
+  }
+  if (*p == ',') {
+    comma = true;
+    p++;
+    while (*p >= '0' && *p <= '9') {
+      has_b = true;
+      if (b <= REP_LIMIT) b = b * 10 + (*p - '0');
+      p++;
+    }
+  }
+  // A comma with no digits on either side is still a quantifier: `{,}` is
+  // `{0,}`, which is `*`. Only a brace with neither digits nor a comma is
+  // literal, which is `{}`, alongside `{x}`, `{2`, `{ 2}` and `{1,2,3}`.
+  //
+  // That was wrong here first, and the test that let it through was vacuous in
+  // the way METHOD warns about: `re.search("a{,}", "a{,}")` is true, which
+  // looks like `{,}` being literal, and is in fact `a*` matching the empty
+  // string at offset 0. `re.fullmatch` separates the two, and so does
+  // compiling `{,}` on its own, which `re` rejects as "nothing to repeat"
+  // precisely because it IS a quantifier.
+  if (*p != '}' || !(has_a || comma)) return false;
+
+  pat = p + 1;
+  if (a > REP_LIMIT || b > REP_LIMIT) { fail("repetition number too large"); return true; }
+  *lo = has_a ? a : 0;
+  *hi = comma ? (has_b ? b : -1) : *lo;
+  if (*hi >= 0 && *hi < *lo) { fail("min repeat greater than max repeat"); return true; }
+  return true;
+}
+
 static Node *parse_atom(void) {
   if (*pat == '(') {
     pat++;
@@ -155,6 +215,13 @@ static Node *parse_atom(void) {
     return n;
   }
   if (*pat == '*' || *pat == '+' || *pat == '?') { fail("nothing to repeat"); return nd(N_EMPTY); }
+  if (*pat == '{') {
+    long long a, b;
+    // Only a WELL-FORMED brace is a quantifier with nothing to repeat. A
+    // malformed one leaves the cursor alone and falls through to the literal
+    // below, which is what `re` does with `{x}`.
+    if (parse_brace(&a, &b)) { if (!failed()) fail("nothing to repeat"); return nd(N_EMPTY); }
+  }
   if (!*pat || *pat == ')' || *pat == '|') return nd(N_EMPTY);
 
   Node *n = nd(N_CHAR);
@@ -162,20 +229,44 @@ static Node *parse_atom(void) {
   return n;
 }
 
+// At most ONE quantifier per atom, which is Python's rule and was not rx's.
+// The old loop folded a second quantifier into a node wrapping the first, so
+// `a*+` compiled as `(a*)+`. In Python 3.11 and later `a*+` is a POSSESSIVE
+// star, and possessive changes the language rather than just the search order:
+// `re.search("a*+a", "aa")` is None where `re.search("a*a", "aa")` matches. rx
+// answered that case with a match, so the old loop was a real divergence,
+// unreached only because the generator never stacked two quantifiers.
 static Node *parse_repeat(void) {
   Node *n = parse_atom();
-  for (;;) {
-    Nk k;
-    if (*pat == '*') k = N_STAR;
-    else if (*pat == '+') k = N_PLUS;
-    else if (*pat == '?') k = N_QUEST;
-    else return n;
-    pat++;
-    // A quantifier on an anchor is meaningless; Python allows it, so do we.
-    Node *r = nd(k);
-    r->l = n;
-    n = r;
+  if (failed()) return n;
+
+  Nk k;
+  long long lo = 0, hi = 0;
+  if (*pat == '*') { k = N_STAR; pat++; }
+  else if (*pat == '+') { k = N_PLUS; pat++; }
+  else if (*pat == '?') { k = N_QUEST; pat++; }
+  else if (parse_brace(&lo, &hi)) { if (failed()) return n; k = N_REP; }
+  else return n;
+
+  // A quantifier on an anchor is meaningless; Python allows it, so do we.
+  Node *r = nd(k);
+  r->l = n;
+  r->lo = lo;
+  r->hi = hi;
+
+  // What may follow a quantifier, by Python's rules:
+  //   '?'  lazy, '+'  possessive. Both are accepted by `re` and neither is
+  //        implemented here. Laziness happens to be invisible to a boolean
+  //        match, but possessiveness is not (see above), and guessing which is
+  //        safe is how a missing feature turns into a wrong answer. Refuse.
+  //   '*'  or another brace: `re` says "multiple repeat". So do we.
+  if (*pat == '?' || *pat == '+') { fail("lazy and possessive quantifiers not supported"); return r; }
+  if (*pat == '*') { fail("multiple repeat"); return r; }
+  if (*pat == '{') {
+    long long a, b;
+    if (parse_brace(&a, &b)) { if (!failed()) fail("multiple repeat"); return r; }
   }
+  return r;
 }
 
 static Node *parse_cat(void) {
@@ -215,8 +306,36 @@ typedef struct {
 
 static Inst *prog;
 static int nprog, prog_cap;
+static bool prog_over;      // the expansion hit PROG_MAX; refuse, do not truncate
+
+// The bound on {m,n} expansion, and it is on the PRODUCT, not on any count.
+//
+// `{m,n}` is compiled by repeating the body, so the program is the product of
+// every enclosing count: `(((a{1000}){1000}){1000})` is twenty-two characters
+// of input asking for a billion instructions, and bounding each count at, say,
+// 10000 would wave all three of those through. Bounding the pattern length
+// does not help either, for the same reason. The only quantity that cannot be
+// got around by nesting is the number of instructions actually emitted, so
+// that is where the check goes: in emit(), one comparison per instruction,
+// reached by every path that can grow the program.
+//
+// 10000 instructions is roughly 480 KB of Inst here, and it also bounds
+// addthread's recursion depth, since a chain of 10000 epsilon transitions is
+// 10000 nested calls. Over the bound rx REFUSES the pattern (exit 3) and does
+// not compile a shortened one: a truncated program matches a different
+// language and would answer confidently and wrongly, which is worse than no
+// answer at all.
+#define PROG_MAX 10000
 
 static int emit(Op op) {
+  if (nprog >= PROG_MAX) {
+    // Return a valid index rather than growing. Callers may still write a
+    // branch target into prog[0], which is harmless because every caller is
+    // about to unwind: compile() returns immediately while this flag is set,
+    // and rx_compile() refuses.
+    prog_over = true;
+    return 0;
+  }
   if (nprog == prog_cap) {
     prog_cap = prog_cap ? prog_cap * 2 : 64;
     prog = realloc(prog, prog_cap * sizeof(Inst));
@@ -229,6 +348,7 @@ static int emit(Op op) {
 // Emitting from a tree (rather than patching a flat stream as we parse) is what
 // makes the quantifiers easy: we already know the whole subexpression.
 static void compile(Node *n) {
+  if (prog_over) return;
   switch (n->k) {
   case N_EMPTY: return;
   case N_CHAR:  { int i = emit(I_CHAR);  prog[i].c = n->c; return; }
@@ -269,6 +389,32 @@ static void compile(Node *n) {
     prog[sp].x = nprog;
     compile(n->l);
     prog[sp].y = nprog;
+    return;
+  }
+  case N_REP: {
+    // Expansion, reusing the quantifiers above rather than open-coding their
+    // emit sequences again: m copies of the body, then either a star of it for
+    // `{m,}` or hi-lo optional copies for `{m,n}`.
+    //
+    // The optional copies are emitted side by side, not nested. `a?a?` and
+    // `(a(a)?)?` accept the same language, and a boolean match is a question
+    // about the language only. Nesting would matter for submatch positions,
+    // which is item 10, not this one.
+    //
+    // The loop tests prog_over on every turn and not just at the end. Without
+    // that, `a{4000000000}` is a valid pattern by Python's rules and would
+    // spin four billion times calling an emit() that does nothing: the bound
+    // would hold and the compiler would still hang, which is the denial of
+    // service this item exists to prevent, moved one level down.
+    for (long long i = 0; i < n->lo && !prog_over; i++) compile(n->l);
+    if (prog_over) return;
+    if (n->hi < 0) {
+      Node star = { .k = N_STAR, .l = n->l };
+      compile(&star);
+    } else {
+      Node quest = { .k = N_QUEST, .l = n->l };
+      for (long long i = n->lo; i < n->hi && !prog_over; i++) compile(&quest);
+    }
     return;
   }
   }
@@ -354,6 +500,7 @@ static bool rx_compile(const char *p) {
   err[0] = 0;
   pat = pat_start = p;
   nprog = 0;
+  prog_over = false;
 
   // Implicit unanchored prefix:  0: SPLIT 1, user   1: ANYNL   2: JMP 0
   // '^' still works, because I_BOL rejects any thread whose position moved.
@@ -370,6 +517,21 @@ static bool rx_compile(const char *p) {
 
   compile(tree);
   emit(I_MATCH);
+  if (prog_over) return false;
+
+  // Shrink the program to its length. prog_cap doubles, so a 10000-instruction
+  // program sat in a 16384-instruction allocation and a read one past the end
+  // landed 6384 instructions inside a live object, where no sanitizer can see
+  // it. Measured, not assumed: with this realloc removed, the planted read in
+  // `make overread` produces no diagnostic at all and the program exits 0.
+  prog = realloc(prog, nprog * sizeof(Inst));
+  prog_cap = nprog;
+
+#ifdef RX_PLANT_OVERREAD
+  // A deliberate one-past-the-end read, compiled only by `make overread`,
+  // which FAILS unless the sanitizer reports it.
+  fprintf(stderr, "rx: planted read: op %d\n", (int)prog[nprog].op);
+#endif
 
   clist.pc = malloc(nprog * sizeof(int));
   nlist.pc = malloc(nprog * sizeof(int));
@@ -390,6 +552,16 @@ int main(int argc, char **argv) {
   const char *p = grep ? argv[2] : argv[1];
 
   if (!rx_compile(p)) {
+    // Two different refusals, and they are not the same event. Exit 2 is "that
+    // is not a pattern". Exit 3 is "that is a pattern, `re` will answer it, and
+    // rx will not, because expanding it exceeds PROG_MAX instructions". A
+    // harness comparing against `re` has to count them apart: the first is a
+    // claim about the pattern that the oracle must agree with, the second is a
+    // limit of this engine that the oracle has no opinion about.
+    if (prog_over) {
+      fprintf(stderr, "rx: pattern too large: expansion exceeds %d instructions\n", PROG_MAX);
+      return 3;
+    }
     fprintf(stderr, "rx: bad pattern: %s\n", err);
     return 2;
   }

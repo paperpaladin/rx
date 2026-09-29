@@ -160,6 +160,36 @@ else
   fail=1
 fi
 
+# The same claim for the COMPILER, which is new with {m,n}.
+#
+# Everything above bounds the matcher. {m,n} is expanded into the program at
+# compile time, so a pattern can now ask the compiler for unbounded work
+# instead: `(((a{1000}){1000}){1000})` is a billion instructions from
+# twenty-four characters. The program bound refuses that, but a bound alone is
+# not enough -- `a{4294967294}` is a valid pattern by `re`'s rules and four
+# billion turns of a loop whose every turn is correctly refused. Both have to
+# come back, and with exit 3.
+#
+# Two seconds, against 1ms measured, so this is a 2000x margin and not a claim
+# about the CPU. The mutant it kills is removing `&& !prog_over` from the
+# expansion loop in rx.c, which takes the second case from 1ms to 5.9s with the
+# bound still holding and the answer still correct: the program cannot blow up
+# and the compiler hangs anyway.
+for bomb in 'a{4294967294}' '(((a{1000}){1000}){1000})' '(a{4294967294}){4294967294}'; do
+  timeout 2 ./rx "$bomb" a >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 3 ]; then
+    echo "  ok: rx refuses $bomb within 2s (exit 3, expansion over the bound)"
+  elif [ "$rc" -eq 124 ]; then
+    echo "  FAIL: rx did not return on $bomb within 2s. The program bound holds"
+    echo "        and the expansion loop walks the count anyway."
+    fail=1
+  else
+    echo "  FAIL: rx exited $rc on $bomb, expected 3 (too large to expand)"
+    fail=1
+  fi
+done
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "linearity: asserted, not just measured"
