@@ -1,4 +1,4 @@
-CFLAGS = -std=c11 -g -O2 -Wall -Wextra
+CFLAGS = -std=c11 -g -O2 -Wall -Wextra -ffile-prefix-map=$(CURDIR)=.
 
 rx: rx.c
 	$(CC) $(CFLAGS) -o $@ $<
