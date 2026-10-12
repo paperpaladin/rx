@@ -52,7 +52,12 @@ are enforced by the generator:
   lookaround, or `{m,n}`. Measuring against features never claimed would be
   measuring the wrong thing.
 
-Inside those bounds: 3000 cases per seed, zero disagreements.
+Inside those bounds: 3000 cases per seed, zero disagreements. The case
+count is a floor now rather than a printout -- `differential.py` returned
+`1 if failures else 0`, with `skipped` outside the decision and `agree`
+unbounded, so a generator change that began emitting patterns Python's `re`
+rejects would have printed `0 agree, 0 disagree, 3000 skipped` and exited 0.
+A green gate that compared nothing.
 
 ## Status
 
@@ -86,6 +91,44 @@ exists for. The fix moves the unanchored prefix into the compiled program:
 
 `^` still works, because the `I_BOL` instruction rejects any thread whose
 position has moved from the start of the text.
+
+## The linear-time claim is asserted now, not printed
+
+This repo exists because `rx` cannot be made to backtrack catastrophically,
+and until this commit that claim was backed by a table. `t/pathological.sh`
+printed timings and ended with an `echo`: no comparison, no threshold, no
+exit status. If `rx` regressed to exponential, `make bench` would have
+printed large numbers and succeeded. It was also wired to `bench` rather
+than `test`, so the commit gate never ran it.
+
+What is asserted is **completion**, not a time. A wall-clock threshold is a
+claim about this CPU under this load. "Answers a case a backtracking engine
+cannot answer" is the actual property, it is machine-tolerant, and it fails
+the moment the thread list stops being linear:
+
+```
+ok: rx answers (a+)+b over 40 a's (exit 1), where python-re does not
+ok: python-re does not return on the same input within 10s
+ok: rx answers over a 1,000,000-character line in 40ms (exit 1)
+```
+
+The middle line is there because the first is vacuous without it: a case
+both engines finish proves nothing about backtracking.
+
+Two things had to be fixed in the assertions themselves before they worked.
+
+`(a+)+b` never matches a run of `a`s, so `rx` **answers** with exit 1 --
+and the first version was written `if timeout 10 ./rx ...`, true only on
+exit 0, so it read that correct answer as a failure. The status is compared
+to the exact set {0, 1} now, with 124 being `timeout`'s verdict and the only
+outcome meaning the engine did not come back.
+
+And the 1MB subject **was never reaching `rx` at all**. Linux caps a single
+`argv` entry at `MAX_ARG_STRLEN`, 32 pages or 131072 bytes, independently of
+`ARG_MAX` -- so `./rx "$PATTERN" "$(a million a's)"` fails to `exec` with
+`E2BIG` and exits 126. The old "1MB subject" line timed that failed exec at
+about 6ms and reported it as the engine's speed. It goes through a file and
+`rx -g` now, and takes 40ms for a line that actually exists.
 
 ## License
 

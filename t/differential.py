@@ -138,6 +138,17 @@ def main():
     if len(failures) > 25:
         print(f"  ... and {len(failures) - 25} more")
 
+    # A floor on the denominator. `skipped` never entered this decision and
+    # `agree` had none, so a generator change that started emitting patterns
+    # Python's re rejects would print "0 agree, 0 disagree, 3000 skipped" and
+    # exit 0 -- a green gate that compared nothing. The oracle is only
+    # consulted on cases that survive the skip, and nothing bounded how few
+    # that could be.
+    if agree < iters * 0.9:
+        print(f"FAIL only {agree} of {iters} cases reached the oracle "
+              f"({skipped} skipped): the generator is producing patterns "
+              f"Python rejects, so this run compared almost nothing")
+        return 1
     return 1 if failures else 0
 
 

@@ -19,7 +19,12 @@ first bug in this project was a change that quietly did not.
 ## Oracle
 
 1. `t/differential.py` -- Python's `re` on randomly generated patterns and
-   subjects. Currently 15,500 cases across 6 seeds, zero disagreements.
+   subjects. `make test` runs 3000 cases at seed 0, zero disagreements.
+
+   The 15,500-across-6-seeds figure that used to be here was hand-run in one
+   sitting and is reproducible from nothing in the repo: there is no seed
+   loop and no multi-seed target. README.md always said 3000 per seed; this
+   file was the one overstating it.
 2. `t/pathological.sh` -- the linearity claim, measured against a real
    backtracking engine rather than asserted.
 
