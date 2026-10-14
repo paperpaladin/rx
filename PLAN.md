@@ -1,4 +1,4 @@
-# rx -- plan
+# rx: plan
 
 ## Contract
 
@@ -9,32 +9,32 @@ exactly.
 
 ## Hard invariant
 
-**A program counter enters a thread list at most once per input position.**
+A program counter enters a thread list at most once per input position.
 
 That is the entire linear-time guarantee. It bounds total work at
 `O(len(text) * len(program))` and makes catastrophic backtracking structurally
-impossible rather than merely unlikely. Every change has to preserve it; the
+impossible, not merely unlikely. Every change has to preserve it; the
 first bug in this project was a change that quietly did not.
 
 ## Oracle
 
-1. `t/differential.py` -- Python's `re` on randomly generated patterns and
+1. `t/differential.py`, Python's `re` on randomly generated patterns and
    subjects. `make test` runs 3000 cases at seed 0, zero disagreements.
 
    The 15,500-across-6-seeds figure that used to be here was hand-run in one
    sitting and is reproducible from nothing in the repo: there is no seed
    loop and no multi-seed target. README.md always said 3000 per seed; this
    file was the one overstating it.
-2. `t/pathological.sh` -- the linearity claim, measured against a real
-   backtracking engine rather than asserted.
+2. `t/pathological.sh`: the linearity claim, measured against a real
+   backtracking engine, not asserted.
 
 ## Non-goals
 
 Capture groups and submatch extraction. `{m,n}`. Lazy quantifiers. Unicode.
 
-**Backreferences are a permanent non-goal**, not a deferral: they are
+Backreferences are a permanent non-goal, not a deferral: they are
 incompatible with the linear-time guarantee. Adding them would mean giving up the
-only interesting property this engine has, so the answer is no rather than later.
+only interesting property this engine has, so the answer is no.
 
 ## Commit sequence
 
@@ -52,7 +52,7 @@ only interesting property this engine has, so the answer is no rather than later
 - [x] 04 pathological benchmark vs python-re
       proves: 1ms flat where python goes 20ms -> 1240ms -> >5s; 1MB in 4ms
 
-### Milestone 1 -- make the oracle harder to satisfy
+### Milestone 1: make the oracle harder to satisfy
 
 - [ ] 05 widen the generator's alphabet to include newline, and implement
       Python's `$`-before-trailing-newline rule so the restriction can be dropped
@@ -67,7 +67,7 @@ only interesting property this engine has, so the answer is no rather than later
       subject before printing them
       why: the first real disagreement will otherwise be a 40-char pattern
 
-### Milestone 2 -- submatches, carefully
+### Milestone 2: submatches, carefully
 
 - [ ] 10 leftmost-longest match position reporting (start and end offsets), still
       without captures
