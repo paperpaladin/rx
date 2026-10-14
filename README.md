@@ -46,8 +46,8 @@ are enforced by the generator:
 
 - Subjects contain no newline. Python's `$` also matches *before* a trailing
   newline, and its `.` excludes newline. rx's `$` only matches at end of string.
-  Rather than emulate the quirk, newlines are excluded and the limitation is
-  stated.
+  The quirk is left unemulated: newlines are excluded from the corpus and
+  the limitation is stated here.
 - Patterns only use constructs rx implements. No captures, backreferences,
   lookaround, or `{m,n}`. Measuring against features never claimed would be
   measuring the wrong thing.
