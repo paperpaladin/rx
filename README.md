@@ -65,7 +65,7 @@ Supported: literals, `.`, `*`, `+`, `?`, `|`, grouping, character classes with
 ranges and negation, `^`, `$`, and the escapes `\d \D \w \W \s \S \n \t \r \f \v`
 plus `\<metachar>` for literals.
 
-Not supported, and not planned soon: capture groups and submatch extraction
+Not supported, and not planned soon. Capture groups and submatch extraction
 (a boolean match needs neither), `{m,n}` repetition, lazy quantifiers,
 backreferences, lookahead and lookbehind, Unicode. Backreferences are not merely
 unimplemented. They are incompatible with the linear-time guarantee, so adding
