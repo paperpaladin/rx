@@ -5,7 +5,9 @@ never backtracks at all.
 
 ```
 $ make test
-3000 agree, 0 disagree, 0 skipped  (seed=0)
+3020 agree, 0 disagree, 0 skipped  (seed=0)
+  3020 generated, 3020 reached the oracle, 1629 of those matched
+  newline in subject: 1825 generated, 1825 compared; trailing newline: 986 generated, 986 compared
 
 $ make bench
 pattern: (a+)+b   subject: N a's, no b (never matches)
@@ -41,29 +43,76 @@ nothing to enumerate.
 `re.search(p, s) is not None` against rx's exit status. Python's `re` is the
 authority. Any disagreement is a bug in rx.
 
-Two restrictions keep that comparison honest, not convenient, and both
-are enforced by the generator:
+One restriction is left, and it is enforced by the generator: patterns only
+use constructs rx implements. No captures, backreferences, lookaround, or
+`{m,n}`. Measuring against features never claimed would be measuring the
+wrong thing.
 
-- Subjects contain no newline. Python's `$` also matches *before* a trailing
-  newline, and its `.` excludes newline. rx's `$` only matches at end of string.
-  The quirk is left unemulated: newlines are excluded from the corpus and
-  the limitation is stated here.
-- Patterns only use constructs rx implements. No captures, backreferences,
-  lookaround, or `{m,n}`. Measuring against features never claimed would be
-  measuring the wrong thing.
+Inside that bound: 3000 random cases plus 20 named corners per seed, zero
+disagreements, and zero at seeds 1 through 5 as well. The case count is a
+floor now, not a printout: `differential.py` returned `1 if failures else 0`,
+with `skipped` outside the decision and `agree` unbounded, so a generator
+change that began emitting patterns Python's `re` rejects would have printed
+`0 agree, 0 disagree, 3000 skipped` and exited 0. A green gate that compared
+nothing. There are floors on the match rate too, in both directions, because
+a corpus where almost nothing matches agrees perfectly while comparing one
+bit over and over.
 
-Inside those bounds: 3000 cases per seed, zero disagreements. The case
-count is a floor now, not a printout: `differential.py` returned
-`1 if failures else 0`, with `skipped` outside the decision and `agree`
-unbounded, so a generator change that began emitting patterns Python's `re`
-rejects would have printed `0 agree, 0 disagree, 3000 skipped` and exited 0.
-A green gate that compared nothing.
+## Newline, which used to be excluded
+
+Subjects used to contain no newline, because newline is where `$` diverged.
+It is now in the alphabet, and the engine implements the rule instead:
+
+| construct | what rx does | the matching Python mode |
+|---|---|---|
+| `.` | does not match newline | no `re.DOTALL` |
+| `^` | start of string only | no `re.MULTILINE` |
+| `$` | end of string, or before a newline that is the LAST character | no `re.MULTILINE` |
+| `[^a]`, `\D`, `\W`, `\S` | DO match newline | same |
+
+The oracle is called with no flags, deliberately and in one place. Comparing a
+no-MULTILINE engine against a MULTILINE oracle produces a pile of differences
+that are all the harness's fault, and they look exactly like engine bugs.
+
+A widened alphabet that nobody counts is not widened, so the run counts. Of
+3020 compared cases at seed 0, 1825 hold a newline and 986 END in one, which
+is the only position the `$` rule is visible at. The run FAILS below 30% and
+10%, so narrowing the alphabet back turns the suite red instead of quietly
+reporting the same agreement over a smaller corpus.
+
+That floor is load-bearing. Six defects planted in rx that only a newline can
+see -- `$` back to end-of-string only, `$` before any newline, `.` matching
+newline, `^` gone MULTILINE, `[^a]` dropping newline, `\D \W \S` dropping
+newline -- are every one of them caught by the widened corpus and every one of
+them SURVIVES 3000 cases of the old alphabet. A seventh, dropping `_` from
+`\w`, is caught by both, which is what says the old-alphabet run was still
+working rather than broken.
+
+## The oracle hangs, and the harness did not notice
+
+`re.search` was called bare. Generated case 1686 of seed 0 is a nested
+quantifier, `([ a-cb-d]?_*|[c-e]1)*(...)+`, against a ten-character subject,
+and Python does not return from it in 100 seconds. The suite would not have
+gone red; it would have wedged, silently, forever. Both sides have a timeout
+now: 2s for `re`, 10s for rx. A case `re` cannot answer is counted and named
+separately, because there is no verdict to compare against, and it is not a
+divergence. rx answers that same case in 1ms, which is the entire point of
+the project.
+
+A timeout on rx's side is a failure, not a skip. A linear-time engine that
+does not return in ten seconds has lost the one property it exists for.
 
 ## Status
 
 Supported: literals, `.`, `*`, `+`, `?`, `|`, grouping, character classes with
 ranges and negation, `^`, `$`, and the escapes `\d \D \w \W \s \S \n \t \r \f \v`
 plus `\<metachar>` for literals.
+
+Not supported, newline division: `re.MULTILINE` and `re.DOTALL`. There are no
+flags at all, so there is no way to ask for them, and the differential harness
+is correct only because it asks `re` for neither. `\A`, `\Z` and `\b` are
+absent as well, so there is no way to spell "end of string, and not before a
+trailing newline" either.
 
 Not supported, and not planned soon. Capture groups and submatch extraction
 (a boolean match needs neither), `{m,n}` repetition, lazy quantifiers,
@@ -91,6 +140,11 @@ exists for. The fix moves the unanchored prefix into the compiled program:
 
 `^` still works, because the `I_BOL` instruction rejects any thread whose
 position has moved from the start of the text.
+
+`I_ANYNL` in that prefix is not `I_ANY`. The implicit search has to be able to
+skip over a newline even when the user's `.` must not, and when newlines were
+excluded from the corpus nothing would have noticed if the two were merged.
+Something does now.
 
 ## The linear-time claim is asserted now, not printed
 

@@ -19,7 +19,10 @@ first bug in this project was a change that quietly did not.
 ## Oracle
 
 1. `t/differential.py`, Python's `re` on randomly generated patterns and
-   subjects. `make test` runs 3000 cases at seed 0, zero disagreements.
+   subjects, with no flags: rx implements neither MULTILINE nor DOTALL, so
+   the oracle must be consulted in the same mode or every difference is the
+   harness's. `make test` runs 20 named newline corners plus 3000 random
+   cases at seed 0, zero disagreements.
 
    The 15,500-across-6-seeds figure that used to be here was hand-run in one
    sitting and is reproducible from nothing in the repo. There is no seed
@@ -54,9 +57,28 @@ only interesting property this engine has, so the answer is no.
 
 ### Milestone 1: make the oracle harder to satisfy
 
-- [ ] 05 widen the generator's alphabet to include newline, and implement
+- [x] 05 widen the generator's alphabet to include newline, and implement
       Python's `$`-before-trailing-newline rule so the restriction can be dropped
       why: the current restriction is honest but it is still a restriction
+      done: one line of engine change (`$` matches at end of string or before a
+            newline that is the last character, which is Python without
+            MULTILINE) and a generator that puts a newline in 60% of subjects
+            and a TRAILING newline in 33%. 20 named corner cases cover the
+            constructs whose meaning newline changes; `re` judges those too.
+            3020 cases, 0 disagreements, and 0 at seeds 1-5 as well.
+            Counted, because a widening nobody counts is not a widening: the
+            run prints newline-bearing and trailing-newline counts and fails
+            below 30% / 10% of the compared total. Six mutations that only a
+            newline can see (`$` reverted, `$` before any newline, `.` matching
+            newline, `^` gone MULTILINE, `[^a]` dropping newline, `\D \W \S`
+            dropping newline) are all caught by the widened corpus and all
+            SURVIVE the old alphabet over 3000 cases.
+      bug: the oracle itself hangs. `re.search` was called bare, and generated
+           case 1686 of seed 0 is a nested-quantifier pattern Python does not
+           answer in 100s against a 10-character subject. The suite would have
+           wedged with no output, which is worse than red. Both sides have a
+           timeout now and unanswerable cases are counted separately. rx
+           answers that case in 1ms.
 - [ ] 06 `{m,n}` repetition by expansion, with a bound on the expanded program
       size so a pattern cannot blow up the compiler instead of the matcher
 - [ ] 07 case-insensitive matching, folded at compile time into the class bitmaps
